@@ -1,9 +1,6 @@
 cat > .gitignore << 'EOF'
-# secrets / credentials
+# secrets
 secrets/
-*.json
-
-# env
 .env
 
 # python
