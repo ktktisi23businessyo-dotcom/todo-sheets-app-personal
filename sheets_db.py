@@ -11,40 +11,29 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-# スプレッドシートURL（環境変数から取得）
+# スプレッドシートURL（必須）
 SHEET_URL = os.environ["SHEET_URL"]
 
-# ローカル用パス
-SERVICE_ACCOUNT_PATH = "secrets/service_account.json"
+# 認証ファイルパス
+# Renderでは /etc/secrets/service_account.json
+# ローカルでは secrets/service_account.json を使う
+SERVICE_ACCOUNT_PATH = os.getenv(
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "secrets/service_account.json"
+)
 
 
 def _get_credentials():
-    """
-    Renderでは SERVICE_ACCOUNT_JSON を使う
-    ローカルでは secrets/service_account.json を使う
-    """
-
-    # ===== Render用 =====
-    if "SERVICE_ACCOUNT_JSON" in os.environ:
-        print("DEBUG MODE: Using SERVICE_ACCOUNT_JSON from environment")
-        info = json.loads(os.environ["SERVICE_ACCOUNT_JSON"])
-
-        print("DEBUG SA_KEYS:", sorted(list(info.keys())))
-        print("DEBUG HAS_PRIVATE_KEY:", "private_key" in info)
-        print("DEBUG CLIENT_EMAIL:", info.get("client_email"))
-
-        return Credentials.from_service_account_info(info, scopes=SCOPES)
-
-    # ===== ローカル用 =====
-    print("DEBUG MODE: Using local service_account.json")
-    print("DEBUG SERVICE_ACCOUNT_PATH:", SERVICE_ACCOUNT_PATH)
+    if not os.path.exists(SERVICE_ACCOUNT_PATH):
+        raise FileNotFoundError(
+            f"Service account file not found: {SERVICE_ACCOUNT_PATH}"
+        )
 
     with open(SERVICE_ACCOUNT_PATH, "r", encoding="utf-8") as f:
         info = json.load(f)
 
-    print("DEBUG SA_KEYS:", sorted(list(info.keys())))
-    print("DEBUG HAS_PRIVATE_KEY:", "private_key" in info)
-    print("DEBUG CLIENT_EMAIL:", info.get("client_email"))
+    if "private_key" not in info:
+        raise ValueError("private_key not found in service account json")
 
     return Credentials.from_service_account_info(info, scopes=SCOPES)
 
@@ -55,22 +44,24 @@ def _get_worksheet():
 
     ss = gc.open_by_url(SHEET_URL)
 
-    print("DEBUG WORKSHEETS:", [ws.title for ws in ss.worksheets()])
-
-    return ss.worksheet("todos")
+    try:
+        return ss.worksheet("todos")
+    except gspread.exceptions.WorksheetNotFound:
+        # なければ自動作成
+        ws = ss.add_worksheet(title="todos", rows=100, cols=6)
+        ws.append_row(["id", "title", "body", "due_date", "created_at", "updated_at"])
+        return ws
 
 
 def list_todos():
     ws = _get_worksheet()
-    rows = ws.get_all_records()
-    return rows
+    return ws.get_all_records()
 
 
 def add_todo(title, body, due_date):
     ws = _get_worksheet()
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     todo_id = str(uuid.uuid4())
 
     ws.append_row([
