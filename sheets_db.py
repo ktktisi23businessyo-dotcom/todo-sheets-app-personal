@@ -25,9 +25,10 @@ if not SHEET_URL:
 
 WORKSHEET_NAME = os.getenv("WORKSHEET_NAME", "todos")
 
-# Render: Secret File を /etc/secrets/service_account.json にマウント
-# ローカル: secrets/service_account.json を使う
-SERVICE_ACCOUNT_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+# Renderでは Secret File を /etc/secrets/service_account.json にマウントする前提
+# ローカルでは .env で GOOGLE_APPLICATION_CREDENTIALS=secrets/service_account.json を渡す
+SERVICE_ACCOUNT_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/etc/secrets/service_account.json")
+
 if not SERVICE_ACCOUNT_PATH:
     # ローカル優先パス（存在すれば）
     local_path = os.path.join("secrets", "service_account.json")
