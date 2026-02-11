@@ -10,27 +10,30 @@ st.set_page_config(page_title="Todoリスト", layout="wide")
 st.title("🧠 Todoリスト（Googleスプレッドシート保存）")
 
 # =============================
-# 🔎 デバッグ表示（Render確認用）
+# 🔎 強化デバッグ表示
 # =============================
-st.subheader("🔍 DEBUG INFO")
+st.subheader("🔍 デバッグ情報")
 
 cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "(not set)")
 st.write("GOOGLE_APPLICATION_CREDENTIALS =", cred_path)
-
-st.write("SHEET_URL exists =", "SHEET_URL" in os.environ)
+st.write("SHEET_URL が存在する =", "SHEET_URL" in os.environ)
 
 try:
     if cred_path != "(not set)" and os.path.exists(cred_path):
         with open(cred_path, "r", encoding="utf-8") as f:
-            info = json.load(f)
+            raw = f.read()
 
+        st.write("DEBUG FILE_LENGTH =", len(raw))
+        st.write("DEBUG CONTAINS_BEGIN_PRIVATE_KEY =", "BEGIN PRIVATE KEY" in raw)
+
+        info = json.loads(raw)
         st.write("SA_KEYS =", sorted(info.keys()))
         st.write("HAS_PRIVATE_KEY =", "private_key" in info)
         st.write("CLIENT_EMAIL =", info.get("client_email"))
     else:
         st.write("Service account file not found.")
 except Exception as e:
-    st.write("Credential read error:", repr(e))
+    st.write("DEBUG READ ERROR =", repr(e))
 
 st.divider()
 
