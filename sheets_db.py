@@ -16,12 +16,10 @@ WORKSHEET_NAME = os.getenv("WORKSHEET_NAME", "todos")
 
 
 def _pick_service_account_path() -> str:
-    # 1) 明示指定（環境変数）
     p = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
     if p and os.path.exists(p):
         return p
 
-    # 2) Renderの一般的な置き場所
     candidates = [
         "/etc/secrets/service_account.json",
         "/etc/secrets/service-account.json",
@@ -31,12 +29,10 @@ def _pick_service_account_path() -> str:
         if os.path.exists(c):
             return c
 
-    # 3) ローカル開発用
     local = "secrets/service_account.json"
     if os.path.exists(local):
         return local
 
-    # どれも無い → ここで落とす
     raise FileNotFoundError(
         "Service account file not found. Tried: "
         + ", ".join([str(p)] + candidates + [local])
@@ -62,7 +58,7 @@ def _get_worksheet():
     try:
         return ss.worksheet(WORKSHEET_NAME)
     except gspread.exceptions.WorksheetNotFound:
-        ws = ss.add_worksheet(title=WORKSHEET_NAME, rows=100, cols=6)
+        ws = ss.add_worksheet(title=WORKSHEET_NAME, rows=200, cols=6)
         ws.append_row(["id", "title", "body", "due_date", "created_at", "updated_at"])
         return ws
 
@@ -76,12 +72,11 @@ def add_todo(title, body, due_date):
     ws = _get_worksheet()
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     todo_id = str(uuid.uuid4())
-
     ws.append_row([todo_id, title, body, str(due_date), now, now])
     return todo_id
 
 
-def update_todo(todo_id, new_title, new_body):
+def update_todo(todo_id, new_title, new_body, new_due_date):
     ws = _get_worksheet()
     rows = ws.get_all_values()
 
@@ -89,5 +84,21 @@ def update_todo(todo_id, new_title, new_body):
         if row and row[0] == todo_id:
             ws.update(f"B{i+1}", new_title)
             ws.update(f"C{i+1}", new_body)
+            ws.update(f"D{i+1}", str(new_due_date))
             ws.update(f"F{i+1}", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            break
+            return True
+
+    raise ValueError("todo_id not found")
+
+
+def delete_todo(todo_id):
+    ws = _get_worksheet()
+    rows = ws.get_all_values()
+
+    for i, row in enumerate(rows):
+        if row and row[0] == todo_id:
+            # 行削除（ヘッダー行を消さない前提）
+            ws.delete_rows(i + 1)
+            return True
+
+    raise ValueError("todo_id not found")
