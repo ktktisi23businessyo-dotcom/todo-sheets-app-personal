@@ -1,90 +1,97 @@
 import os
 import json
+from datetime import datetime
 import uuid
-from datetime import datetime, date
 
 import gspread
 from google.oauth2.service_account import Credentials
-
-# ローカル用（Renderでは無視されてもOK）
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
 
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
 
-# ローカルは .env で、Renderは Environment Variables で入る
-SHEET_URL = os.getenv("SHEET_URL")
-if not SHEET_URL:
-    raise KeyError("SHEET_URL")
+# スプレッドシートURL（環境変数から取得）
+SHEET_URL = os.environ["SHEET_URL"]
 
-WORKSHEET_NAME = os.getenv("WORKSHEET_NAME", "todos")
-
-# Renderでは Secret File を /etc/secrets/service_account.json にマウントする前提
-# ローカルでは .env で GOOGLE_APPLICATION_CREDENTIALS=secrets/service_account.json を渡す
-SERVICE_ACCOUNT_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/etc/secrets/service_account.json")
-
-if not SERVICE_ACCOUNT_PATH:
-    # ローカル優先パス（存在すれば）
-    local_path = os.path.join("secrets", "service_account.json")
-    SERVICE_ACCOUNT_PATH = local_path if os.path.exists(local_path) else "/etc/secrets/service_account.json"
+# ローカル用パス
+SERVICE_ACCOUNT_PATH = "secrets/service_account.json"
 
 
-def _now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+def _get_credentials():
+    """
+    Renderでは SERVICE_ACCOUNT_JSON を使う
+    ローカルでは secrets/service_account.json を使う
+    """
 
+    # ===== Render用 =====
+    if "SERVICE_ACCOUNT_JSON" in os.environ:
+        print("DEBUG MODE: Using SERVICE_ACCOUNT_JSON from environment")
+        info = json.loads(os.environ["SERVICE_ACCOUNT_JSON"])
 
-def _get_worksheet():
+        print("DEBUG SA_KEYS:", sorted(list(info.keys())))
+        print("DEBUG HAS_PRIVATE_KEY:", "private_key" in info)
+        print("DEBUG CLIENT_EMAIL:", info.get("client_email"))
+
+        return Credentials.from_service_account_info(info, scopes=SCOPES)
+
+    # ===== ローカル用 =====
+    print("DEBUG MODE: Using local service_account.json")
+    print("DEBUG SERVICE_ACCOUNT_PATH:", SERVICE_ACCOUNT_PATH)
+
     with open(SERVICE_ACCOUNT_PATH, "r", encoding="utf-8") as f:
         info = json.load(f)
 
-    creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+    print("DEBUG SA_KEYS:", sorted(list(info.keys())))
+    print("DEBUG HAS_PRIVATE_KEY:", "private_key" in info)
+    print("DEBUG CLIENT_EMAIL:", info.get("client_email"))
+
+    return Credentials.from_service_account_info(info, scopes=SCOPES)
+
+
+def _get_worksheet():
+    creds = _get_credentials()
     gc = gspread.authorize(creds)
 
     ss = gc.open_by_url(SHEET_URL)
-    return ss.worksheet(WORKSHEET_NAME)
+
+    print("DEBUG WORKSHEETS:", [ws.title for ws in ss.worksheets()])
+
+    return ss.worksheet("todos")
 
 
-def list_todos() -> list[dict]:
+def list_todos():
     ws = _get_worksheet()
-    return ws.get_all_records()
+    rows = ws.get_all_records()
+    return rows
 
 
-def add_todo(title: str, body: str, due_date: date) -> str:
+def add_todo(title, body, due_date):
     ws = _get_worksheet()
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     todo_id = str(uuid.uuid4())
-    now = _now_iso()
 
-    ws.append_row(
-        [todo_id, title, body, due_date.isoformat(), now, now],
-        value_input_option="USER_ENTERED",
-    )
+    ws.append_row([
+        todo_id,
+        title,
+        body,
+        str(due_date),
+        now,
+        now,
+    ])
+
     return todo_id
 
 
-def update_todo(todo_id: str, title: str, body: str, due_date: date) -> None:
+def update_todo(todo_id, new_title, new_body):
     ws = _get_worksheet()
-    all_rows = ws.get_all_values()
+    rows = ws.get_all_values()
 
-    target_row_index = None
-    for i in range(1, len(all_rows)):  # 1行目はヘッダー
-        if len(all_rows[i]) > 0 and all_rows[i][0] == todo_id:
-            target_row_index = i + 1
+    for i, row in enumerate(rows):
+        if row and row[0] == todo_id:
+            ws.update(f"B{i+1}", new_title)
+            ws.update(f"C{i+1}", new_body)
+            ws.update(f"F{i+1}", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             break
-
-    if target_row_index is None:
-        raise ValueError(f"todo_id not found: {todo_id}")
-
-    now = _now_iso()
-    existing_created_at = all_rows[target_row_index - 1][4] if len(all_rows[target_row_index - 1]) >= 5 else ""
-
-    ws.update(
-        f"B{target_row_index}:F{target_row_index}",
-        [[title, body, due_date.isoformat(), existing_created_at, now]],
-    )
