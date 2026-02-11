@@ -1,49 +1,72 @@
 import os
+import json
 import uuid
 from datetime import datetime, date
 
 import gspread
 from google.oauth2.service_account import Credentials
 
-SERVICE_ACCOUNT_FILE = "secrets/service_account.json"
-
+# =========================
+# Config
+# =========================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
 
-# ↓あなたのスプレッドシートURLに合わせておく（test_sheets.pyと同じでOK）
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1qm2cpeQ0_5VUFlWZomolY1dwpxRAX2alx_2CtJN50Is/edit?gid=0#gid=0"
-WORKSHEET_NAME = "todos"
+# RenderのEnvironmentで設定する
+SHEET_URL = os.environ["SHEET_URL"]  # 例: https://docs.google.com/spreadsheets/d/xxxx/edit#gid=0
+WORKSHEET_NAME = os.environ.get("WORKSHEET_NAME", "todos")
+
+# Render Secret File のマウント先（Environmentで GOOGLE_APPLICATION_CREDENTIALS を設定するのが推奨）
+SERVICE_ACCOUNT_PATH = os.environ.get(
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "/etc/secrets/service_account.json",
+)
+
+# =========================
+# Internal helpers
+# =========================
+def _now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
 
 
 def _get_worksheet():
-    creds = Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=SCOPES,
-    )
+    """
+    Google Service Account JSON を Secret File から読み込み、
+    指定したスプレッドシートの指定シート（タブ）を返す。
+    """
+    with open(SERVICE_ACCOUNT_PATH, "r", encoding="utf-8") as f:
+        info = json.load(f)
+
+    creds = Credentials.from_service_account_info(info, scopes=SCOPES)
     gc = gspread.authorize(creds)
+
     ss = gc.open_by_url(SHEET_URL)
-
-    print("DEBUG SHEET_URL:", SHEET_URL)
-    print("DEBUG WORKSHEETS:", [ws.title for ws in ss.worksheets()])
-
     return ss.worksheet(WORKSHEET_NAME)
 
 
-
+# =========================
+# Public API (CRUD)
+# =========================
 def list_todos() -> list[dict]:
+    """
+    todosシートの全データを dict のリストで返す。
+    1行目はヘッダーとして扱われる前提（get_all_records）。
+    """
     ws = _get_worksheet()
-    rows = ws.get_all_records()  # 1行目をヘッダーとしてdict化
-    # due_dateは文字列で入ってる前提。空なら空。
-    return rows
+    return ws.get_all_records()
 
 
 def add_todo(title: str, body: str, due_date: date) -> str:
+    """
+    Todoを1件追加し、生成したid(UUID)を返す。
+    """
     ws = _get_worksheet()
-    now = datetime.now().isoformat(timespec="seconds")
 
     todo_id = str(uuid.uuid4())
+    now = _now_iso()
+
     ws.append_row(
         [
             todo_id,
@@ -59,11 +82,16 @@ def add_todo(title: str, body: str, due_date: date) -> str:
 
 
 def update_todo(todo_id: str, title: str, body: str, due_date: date) -> None:
+    """
+    idで対象行を特定して更新する。
+    シート構造（列）は以下を前提：
+    A=id, B=title, C=body, D=due_date, E=created_at, F=updated_at
+    """
     ws = _get_worksheet()
     all_rows = ws.get_all_values()
 
     # all_rows[0] がヘッダー、データは2行目以降
-    target_row_index = None  # 1始まり（Google Sheetsの行番号）
+    target_row_index = None  # Google Sheets上の行番号（1始まり）
     for i in range(1, len(all_rows)):
         if len(all_rows[i]) > 0 and all_rows[i][0] == todo_id:
             target_row_index = i + 1
@@ -72,13 +100,21 @@ def update_todo(todo_id: str, title: str, body: str, due_date: date) -> None:
     if target_row_index is None:
         raise ValueError(f"todo_id not found: {todo_id}")
 
-    now = datetime.now().isoformat(timespec="seconds")
+    now = _now_iso()
 
-    # 列: A=id, B=title, C=body, D=due_date, E=created_at, F=updated_at
-    ws.update(f"B{target_row_index}:F{target_row_index}", [[
-        title,
-        body,
-        due_date.isoformat(),
-        all_rows[target_row_index - 1][4] if len(all_rows[target_row_index - 1]) >= 5 else "",
-        now,
-    ]])
+    # created_at は既存値を保持したい
+    existing_created_at = ""
+    if len(all_rows[target_row_index - 1]) >= 5:
+        existing_created_at = all_rows[target_row_index - 1][4]
+
+    # B〜F を更新（A=idは変更しない）
+    ws.update(
+        f"B{target_row_index}:F{target_row_index}",
+        [[
+            title,
+            body,
+            due_date.isoformat(),
+            existing_created_at,
+            now,
+        ]],
+    )
