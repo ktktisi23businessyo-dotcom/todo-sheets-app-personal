@@ -1,5 +1,6 @@
-streamlit
-gspread
-google-auth
-pandas
-python-dotenv
+streamlit==1.32.2
+gspread==6.1.2
+google-auth==2.28.1
+pandas==2.2.1
+flask==3.0.2
+line-bot-sdk==3.9.0
